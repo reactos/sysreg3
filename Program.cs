@@ -23,7 +23,7 @@ namespace sysreg3
         string dbgPortPath = "C:\\testbot.txt";
         int maxRetries = 3;
         int numStages = 3;
-        int vmTimeout = 120 * 1000; // 120 secs
+        int vmTimeout = 40 * 1000; // 120 secs
 
         ulong hddSize = 2048;
 
@@ -307,7 +307,13 @@ namespace sysreg3
                             vmSession.Close();
 
                             /* Wait till the machine state is actually closed (no vmProgress alas) */
-                            //while (vmSession.State != SessionState.SessionState_Closed) Thread.Sleep(1000);
+                            int waitingTimeout = 0;
+                            while (vmSession.State != SessionState.SessionState_Closed ||
+                                   waitingTimeout < 5)
+                            {
+                                Thread.Sleep(1000);
+                                waitingTimeout++;
+                            }
                         }
                         catch
                         {
