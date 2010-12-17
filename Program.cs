@@ -206,8 +206,7 @@ namespace sysreg3
         {
             try
             {
-                ISerialPort dbgPort = vmSession.Machine.GetSerialPort(0);
-                FileStream dbgFile = File.Open(dbgPort.Path, FileMode.Truncate);
+                FileStream dbgFile = File.Open(dbgPortPath, FileMode.Truncate);
                 dbgFile.Close();
             }
             catch
@@ -227,6 +226,11 @@ namespace sysreg3
                 dbgPort.Enabled = 1;
                 dbgPort.Path = dbgPortPath;
                 dbgPort.HostMode = PortMode.PortMode_RawFile;
+            }
+            else
+            {
+                /* Cache its path */
+                dbgPortPath = dbgPort.Path;
             }
         }
 
@@ -259,11 +263,11 @@ namespace sysreg3
             /* Empty or create the HDD, prepare for the first run */
             EmptyHardDisk(vmSession);
 
-            /* Empty the debug log file */
-            EmptyDebugLog(vmSession);
-
             /* Close VM session */
             vmSession.Close();
+
+            /* Empty the debug log file */
+            EmptyDebugLog(vmSession);
 
             /* Start main testing loop */
             for (int stage = 0; stage < numStages; stage++)
@@ -297,6 +301,18 @@ namespace sysreg3
                         vmProgress = vmSession.Console.PowerDown();
                         vmProgress.WaitForCompletion(-1);
 
+                        try
+                        {
+                            /* Close the VM session without paying attention to any problems */
+                            vmSession.Close();
+
+                            /* Wait till the machine state is actually closed (no vmProgress alas) */
+                            //while (vmSession.State != SessionState.SessionState_Closed) Thread.Sleep(1000);
+                        }
+                        catch
+                        {
+                        }
+
                         /* If we have a checkpoint to reach for success, assume that
                            the application used for running the tests (probably "rosautotest")
                            continues with the next test after a VM restart. */
@@ -306,10 +322,6 @@ namespace sysreg3
                         {
                             /* Empty the debug log file */
                             EmptyDebugLog(vmSession);
-
-                            /* Close VM session */
-                            vmSession.Close();
-
                             break;
                         }
                     }
@@ -319,9 +331,6 @@ namespace sysreg3
                         //break;
                     }
                 }
-
-                /* Wait till the machine state is actually closed (no vmProgress alas) */
-                //while (vmSession.State != SessionState.SessionState_Closed) Thread.Sleep(1000);
 
                 /* Check for a maximum number of retries */
                 if (retries == maxRetries)
