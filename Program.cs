@@ -48,6 +48,11 @@ namespace sysreg3
             stageCheckpoint[0] = "It's the final countdown...";
             stageCheckpoint[1] = "It's the final countdown...";
             stageCheckpoint[2] = "SYSREG_CHECKPOINT:THIRDBOOT_COMPLETE";
+
+            /* Get temp dir location and construct serial log path */
+            string tempPath = Path.GetTempPath();
+            dbgPortPath = tempPath + "testbot.txt";
+            Console.WriteLine("[SYSREG] Serial log path: " + dbgPortPath);
         }
 
         private ContinueType ProcessDebugOutput(ISession vmSession, int stage)
@@ -229,8 +234,8 @@ namespace sysreg3
             }
             else
             {
-                /* Cache its path */
-                dbgPortPath = dbgPort.Path;
+                /* Ensure it's set to the most up to date path */
+                dbgPort.Path = dbgPortPath;
             }
         }
 
