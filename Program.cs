@@ -50,8 +50,8 @@ namespace sysreg3
             stageCheckpoint[2] = "SYSREG_CHECKPOINT:THIRDBOOT_COMPLETE";
 
             /* Get temp dir location and construct serial log path */
-            string tempPath = Path.GetTempPath();
-            dbgPortPath = tempPath + "testbot.txt";
+            string tempPath = Path.GetFullPath(Environment.CurrentDirectory);
+            dbgPortPath = tempPath + "\\testbot.txt";
             Console.WriteLine("[SYSREG] Serial log path: " + dbgPortPath);
         }
 
