@@ -21,9 +21,9 @@ namespace sysreg3
     {
         string machineName = "ReactOS Testbot";
         string dbgPortPath = "C:\\testbot.txt";
-        int maxRetries = 3;
+        int maxRetries = 30;
         int numStages = 3;
-        int vmTimeout = 40 * 1000; // 120 secs
+        int vmTimeout = 60 * 1000; // 60 secs
 
         ulong hddSize = 2048;
 
@@ -98,7 +98,7 @@ namespace sysreg3
                         Console.WriteLine(line);
 
                         /* Check for magic sequences */
-                        if (line == "kdb:> ")
+                        if (line.Contains("kdb:>"))
                         {
                             kdbgHit++;
 
