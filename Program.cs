@@ -25,7 +25,7 @@ namespace sysreg3
         int numStages = 3;
         int vmTimeout = 60 * 1000; // 60 secs
 
-        ulong hddSize = 2048;
+        Int64 hddSize = (Int64)2048 * 1024 * 1024;
 
         IMachine rosVM;
         IVirtualBox vBox;
@@ -158,53 +158,99 @@ namespace sysreg3
             return Result;
         }
 
-        private void CreateHardDisk(Session vmSession)
+        private void CreateHardDisk(Session vmSession, IStorageController controller, int dev, int port)
         {
             IMedium rosHdd;
             IProgress progress;
-            IStorageController controller;
+
+            string curDir = Path.GetFullPath(Environment.CurrentDirectory);
 
             /* Create the hdd and storage */
-            rosHdd = vBox.CreateHardDisk(null, "ReactOS Testbot.vdi");
-            progress = rosHdd.CreateBaseStorage(hddSize, MediumVariant.MediumVariant_Standard);
+            rosHdd = vBox.CreateHardDisk(null, curDir + "\\ReactOS Testbot.vdi");
+            progress = rosHdd.CreateBaseStorage(hddSize, (uint)MediumVariant.MediumVariant_Standard);
             progress.WaitForCompletion(-1);
 
+            //String errStr;
+            //progress.ErrorInfo.GetDescription(out errStr);
+            //Console.WriteLine(errStr);
+
+            /* FIXME: Make sure there is no hdd with the same name hanging around in registered condition */
+
             /* Attach it to the vm */
-            controller = rosVM.GetStorageControllerByInstance(0);
             vmSession.Machine.SaveSettings();
-            vmSession.Machine.AttachDevice(controller.Name, 0, 0, DeviceType.DeviceType_HardDisk, rosHdd.Id);
+            vmSession.Machine.AttachDevice(controller.Name, port, dev, DeviceType.DeviceType_HardDisk, rosHdd);
             vmSession.Machine.SaveSettings();
         }
 
         private void EmptyHardDisk(Session vmSession)
         {
             IProgress progress;
-            IStorageController controller;
-            IMedium rosHdd;// = rosVM.GetMedium("IDE Controller", 0, 0);
+            IStorageController controller = null;
+            uint inst;
+            IMedium rosHdd = null;
+            int dev = 0, port;
+            Boolean HddFound = false;
 
-            try
+            /* Go through storage controllers to find IDE/SATA one */
+            for (inst = 0; inst < 4; inst++)
             {
-                rosHdd = vBox.FindHardDisk("ReactOS Testbot.vdi");
+                try
+                {
+                    controller = rosVM.GetStorageControllerByInstance(inst);
+                    if (controller.Bus == StorageBus.StorageBus_IDE ||
+                        controller.Bus == StorageBus.StorageBus_SATA)
+                        break;
+                }
+                catch (Exception exc)
+                {
+                    /* Just skip it */
+                }
             }
-            catch (Exception exc)
+
+            /* Now check what HDD we have connected to this controller */
+            for (port = 0; port < controller.MaxPortCount; port++)
             {
-                /* Opening failed. Probably we need to create it */
-                //Console.WriteLine("[SYSREG] Finding hdd failed: " + exc.ToString());
-                CreateHardDisk(vmSession);
-                return;
+                for (dev = 0; dev < controller.MaxDevicesPerPortCount; dev++)
+                {
+                    try
+                    {
+                        rosHdd = rosVM.GetMedium(controller.Name, port, dev);
+                        if (rosHdd.DeviceType == DeviceType.DeviceType_HardDisk)
+                        {
+                            /* We found the one and only harddisk */
+                            HddFound = true;
+                            break;
+                        }
+                        rosHdd.Close();
+                    }
+                    catch (Exception exc)
+                    {
+                        /* Just skip it */
+                    }
+                }
+
+                if (HddFound) break;
             }
 
-            /* Delete the existing hdd */
-            controller = rosVM.GetStorageControllerByInstance(0);
-            vmSession.Machine.DetachDevice(controller.Name, 0, 0);
-            vmSession.Machine.SaveSettings();
+            if (HddFound)
+            {
+                /* Delete it and create a new one */
+                vmSession.Machine.DetachDevice(controller.Name, port, dev);
+                vmSession.Machine.SaveSettings();
 
-            progress = rosHdd.DeleteStorage();
-            progress.WaitForCompletion(-1);
-            rosHdd.Close();
+                progress = rosHdd.DeleteStorage();
+                progress.WaitForCompletion(-1);
+                rosHdd.Close();
+            }
+            else
+            {
+                /* FIXME: We should find a free slot for the HDD */
+                port = 0;
+                dev = 0;
+            }
 
             /* Create a new one */
-            CreateHardDisk(vmSession);
+            CreateHardDisk(vmSession, controller, port, dev);
         }
 
         private void EmptyDebugLog(Session vmSession)
@@ -260,7 +306,7 @@ namespace sysreg3
                 return;
             }
 
-            vBox.OpenSession(vmSession, rosVM.Id);
+            rosVM.LockMachine(vmSession, LockType.LockType_Write);
 
             /* Configure the virtual machine */
             ConfigVm(vmSession);
@@ -269,7 +315,7 @@ namespace sysreg3
             EmptyHardDisk(vmSession);
 
             /* Close VM session */
-            vmSession.Close();
+            vmSession.UnlockMachine();
 
             /* Empty the debug log file */
             EmptyDebugLog(vmSession);
@@ -283,7 +329,7 @@ namespace sysreg3
                     /* Start the VM */
                     try
                     {
-                        vmProgress = vBox.OpenRemoteSession(vmSession, rosVM.Id, "gui", null);
+                        vmProgress = rosVM.LaunchVMProcess(vmSession, "gui", null);
                         vmProgress.WaitForCompletion(-1);
 
                         if (vmProgress.ResultCode != 0)
@@ -292,7 +338,7 @@ namespace sysreg3
                             Console.WriteLine("Error starting VM: " + vmProgress.ErrorInfo.Text);
 
                             /* Close VM session */
-                            vmSession.Close();
+                            vmSession.UnlockMachine();
                             break;
                         }
 
@@ -309,11 +355,11 @@ namespace sysreg3
                         try
                         {
                             /* Close the VM session without paying attention to any problems */
-                            vmSession.Close();
+                            vmSession.UnlockMachine();
 
                             /* Wait till the machine state is actually closed (no vmProgress alas) */
                             int waitingTimeout = 0;
-                            while (vmSession.State != SessionState.SessionState_Closed ||
+                            while (vmSession.State != SessionState.SessionState_Unlocked ||
                                    waitingTimeout < 5)
                             {
                                 Thread.Sleep(1000);
