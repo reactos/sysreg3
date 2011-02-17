@@ -358,6 +358,7 @@ namespace sysreg3
             {
                 case ContinueType.EXIT_CHECKPOINT_REACHED:
                     Console.WriteLine("[SYSREG] Status: Reached the checkpoint!");
+                    Environment.ExitCode = 0;
                     break;
                 case ContinueType.EXIT_CONTINUE:
                     Console.WriteLine("[SYSREG] Status: Failed to reach the checkpoint!!");
@@ -373,6 +374,7 @@ namespace sysreg3
     {
         static void Main(string[] args)
         {
+            Environment.ExitCode = 1;
             RegTester regTester = new RegTester();
             regTester.RunTests();
         }
