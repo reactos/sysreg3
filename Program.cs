@@ -9,7 +9,9 @@
 
 using System;
 using System.Collections.Generic;
+using System.IO.Pipes;
 using System.Linq;
+using System.Security.Principal;
 using System.Text;
 using System.Threading;
 using System.IO;
@@ -19,13 +21,16 @@ namespace sysreg3
 {
     class RegTester
     {
-        string machineName = "ReactOS Testbot";
-        string dbgPortPath = "C:\\testbot.txt";
-        int maxRetries = 30;
-        int numStages = 3;
-        int vmTimeout = 60 * 1000; // 60 secs
+        const string machineName = "ReactOS Testbot";
+        const string diskFileName = "ReactOS Testbot.vdi";
+        const int maxRetries = 30;
+        const int numStages = 3;
+        const int vmTimeout = 60 * 1000; // 60 secs
+        const ulong hddSize = 2048;
+        const string namedPipeName = @"reactos\testbot";
 
-        ulong hddSize = 2048;
+        readonly string vmBaseFolder; // Directory where VM will be created if it doesn't exist yet
+        readonly string debugLogFilename;
 
         IMachine rosVM;
         IVirtualBox vBox;
@@ -49,112 +54,116 @@ namespace sysreg3
             stageCheckpoint[1] = "It's the final countdown...";
             stageCheckpoint[2] = "SYSREG_CHECKPOINT:THIRDBOOT_COMPLETE";
 
-            /* Get temp dir location and construct serial log path */
-            string tempPath = Path.GetFullPath(Environment.CurrentDirectory);
-            dbgPortPath = tempPath + "\\testbot.txt";
-            Console.WriteLine("[SYSREG] Serial log path: " + dbgPortPath);
+            vmBaseFolder = Path.Combine(Environment.CurrentDirectory, "vm");
+            debugLogFilename = Path.Combine(Environment.CurrentDirectory, "testbot.txt");
+            
+            Console.WriteLine("[SYSREG] Serial log path: " + debugLogFilename);
         }
 
         private ContinueType ProcessDebugOutput(ISession vmSession, int stage)
         {
             ContinueType Result = ContinueType.EXIT_DONT_CONTINUE;
 
-            /* Get the serial port */
-            ISerialPort dbgPort = vmSession.Machine.GetSerialPort(0);
+            // Connect to the named pipe of the VM to receive its debug info.
+            NamedPipeClientStream pipe = new NamedPipeClientStream("localhost", namedPipeName, PipeDirection.In);
 
-            Stream stream = new FileStream(dbgPort.Path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
-            StreamReader sr = new StreamReader(stream);
-
-            try
+            using (StreamReader sr = new StreamReader(pipe))
+            using (TextWriter debugLogWriter = new StreamWriter(debugLogFilename, false))
             {
-                string line;
-                int kdbgHit = 0;
-                bool quitLoop = false;
-
-                while (!quitLoop)
+                try
                 {
-                    /* Poll the stream every 1 sec */
-                    int waitingTime = 0;
-                    while (sr.EndOfStream)
+                    pipe.Connect(3000);
+
+                    string line;
+                    int kdbgHit = 0;
+                    bool quitLoop = false;
+
+                    while (!quitLoop)
                     {
-                        waitingTime += 1000;
-                        Thread.Sleep(1000);
-
-                        /* Peek a byte to update the EndOfStream value */
-                        sr.Peek();
-
-                        if (waitingTime >= vmTimeout)
+                        /* Poll the stream every 1 sec */
+                        int waitingTime = 0;
+                        while (sr.EndOfStream)
                         {
-                            /* We hit the timeout, quit */
-                            Console.WriteLine("[SYSREG] timeout");
-                            Result = ContinueType.EXIT_CONTINUE;
-                            quitLoop = true;
-                            break;
-                        }
-                    }
+                            waitingTime += 1000;
+                            Thread.Sleep(1000);
 
-                    while ((line = sr.ReadLine()) != null)
-                    {
-                        Console.WriteLine(line);
+                            /* Peek a byte to update the EndOfStream value */
+                            sr.Peek();
 
-                        /* Check for magic sequences */
-                        if (line.Contains("kdb:>"))
-                        {
-                            kdbgHit++;
-
-                            if (kdbgHit == 1)
+                            if (waitingTime >= vmTimeout)
                             {
-                                /* It happened for the first time, backtrace */
-                                vmSession.Console.Keyboard.PutScancode(0x30); // b make
-                                vmSession.Console.Keyboard.PutScancode(0xb0); // b release
-                                vmSession.Console.Keyboard.PutScancode(0x14); // t make
-                                vmSession.Console.Keyboard.PutScancode(0x94); // t release
-                                vmSession.Console.Keyboard.PutScancode(0x1c); // Enter make
-                                vmSession.Console.Keyboard.PutScancode(0x9c); // Enter release
-
-                                continue;
-                            }
-                            else
-                            {
-                                /* It happened once again, no reason to continue */
-                                Console.WriteLine();
+                                /* We hit the timeout, quit */
+                                Console.WriteLine("[SYSREG] timeout");
                                 Result = ContinueType.EXIT_CONTINUE;
                                 quitLoop = true;
                                 break;
                             }
                         }
-                        else if (line.Contains("--- Press q"))
+
+                        while ((line = sr.ReadLine()) != null)
                         {
-                            /* Send Return to get more data from Kdbg */
-                            vmSession.Console.Keyboard.PutScancode(0x1c); // Enter make
-                            vmSession.Console.Keyboard.PutScancode(0x9c); // Enter release
-                            continue;
-                        }
-                        else if (line.Contains("SYSREG_ROSAUTOTEST_FAILURE"))
-                        {
-                            quitLoop = true;
-                            break;
-                        }
-                        else if (line.Contains(stageCheckpoint[stage]))
-                        {
-                            Result = ContinueType.EXIT_CHECKPOINT_REACHED;
-                            quitLoop = true;
-                            break;
+                            Console.WriteLine(line);
+                            debugLogWriter.WriteLine(line);
+
+                            /* Check for magic sequences */
+                            if (line.Contains("kdb:>"))
+                            {
+                                kdbgHit++;
+
+                                if (kdbgHit == 1)
+                                {
+                                    /* It happened for the first time, backtrace */
+                                    vmSession.Console.Keyboard.PutScancode(0x30); // b make
+                                    vmSession.Console.Keyboard.PutScancode(0xb0); // b release
+                                    vmSession.Console.Keyboard.PutScancode(0x14); // t make
+                                    vmSession.Console.Keyboard.PutScancode(0x94); // t release
+                                    vmSession.Console.Keyboard.PutScancode(0x1c); // Enter make
+                                    vmSession.Console.Keyboard.PutScancode(0x9c); // Enter release
+
+                                    continue;
+                                }
+                                else
+                                {
+                                    /* It happened once again, no reason to continue */
+                                    Console.WriteLine();
+                                    Result = ContinueType.EXIT_CONTINUE;
+                                    quitLoop = true;
+                                    break;
+                                }
+                            }
+                            else if (line.Contains("--- Press q"))
+                            {
+                                /* Send Return to get more data from Kdbg */
+                                vmSession.Console.Keyboard.PutScancode(0x1c); // Enter make
+                                vmSession.Console.Keyboard.PutScancode(0x9c); // Enter release
+                                continue;
+                            }
+                            else if (line.Contains("SYSREG_ROSAUTOTEST_FAILURE"))
+                            {
+                                quitLoop = true;
+                                break;
+                            }
+                            else if (line.Contains(stageCheckpoint[stage]))
+                            {
+                                Result = ContinueType.EXIT_CHECKPOINT_REACHED;
+                                quitLoop = true;
+                                break;
+                            }
                         }
                     }
                 }
+                catch (Exception e)
+                {
+                    // Let the user know what went wrong.
+                    Console.WriteLine("The file could not be read:");
+                    Console.WriteLine(e.Message);
+                }
+                finally
+                {
+                    sr.Close();
+                    debugLogWriter.Close();
+                }
             }
-            catch (Exception e)
-            {
-                // Let the user know what went wrong.
-                Console.WriteLine("The file could not be read:");
-                Console.WriteLine(e.Message);
-            }
-            finally
-            {
-                sr.Close();
-            }
-
             return Result;
         }
 
@@ -165,7 +174,7 @@ namespace sysreg3
             IStorageController controller;
 
             /* Create the hdd and storage */
-            rosHdd = vBox.CreateHardDisk(null, "ReactOS Testbot.vdi");
+            rosHdd = vBox.CreateHardDisk(null, diskFileName);
             progress = rosHdd.CreateBaseStorage(hddSize, MediumVariant.MediumVariant_Standard);
             progress.WaitForCompletion(-1);
 
@@ -184,7 +193,7 @@ namespace sysreg3
 
             try
             {
-                rosHdd = vBox.FindHardDisk("ReactOS Testbot.vdi");
+                rosHdd = vBox.FindHardDisk(diskFileName);
             }
             catch (Exception exc)
             {
@@ -195,13 +204,20 @@ namespace sysreg3
             }
 
             /* Delete the existing hdd */
-            controller = rosVM.GetStorageControllerByInstance(0);
-            vmSession.Machine.DetachDevice(controller.Name, 0, 0);
-            vmSession.Machine.SaveSettings();
+            try
+            {
+                controller = rosVM.GetStorageControllerByInstance(0);
+                vmSession.Machine.DetachDevice(controller.Name, 0, 0);
+                vmSession.Machine.SaveSettings();
 
-            progress = rosHdd.DeleteStorage();
-            progress.WaitForCompletion(-1);
-            rosHdd.Close();
+                progress = rosHdd.DeleteStorage();
+                progress.WaitForCompletion(-1);
+                rosHdd.Close();
+            }
+            catch (Exception exc)
+            {
+                Console.WriteLine("Could not delete existing HDD:" + exc);
+            }
 
             /* Create a new one */
             CreateHardDisk(vmSession);
@@ -211,7 +227,7 @@ namespace sysreg3
         {
             try
             {
-                FileStream dbgFile = File.Open(dbgPortPath, FileMode.Truncate);
+                FileStream dbgFile = File.Open(debugLogFilename, FileMode.Truncate);
                 dbgFile.Close();
             }
             catch
@@ -225,23 +241,40 @@ namespace sysreg3
             /* Check serial port */
             ISerialPort dbgPort = vmSession.Machine.GetSerialPort(0);
 
-            if (dbgPort.Enabled == 0)
+            // Path must be set BEFORE setting HostMode!
+            dbgPort.Path = @"\\.\pipe\" + namedPipeName; // Name must always have this special prefix
+            dbgPort.HostMode = PortMode.PortMode_HostPipe;
+            dbgPort.Server = 1;
+            dbgPort.Enabled = 1;
+        }
+
+        private IMachine CreateVm()
+        {
+            IMachine vm = null;
+
+            try
             {
-                /* Create it */
-                dbgPort.Enabled = 1;
-                dbgPort.Path = dbgPortPath;
-                dbgPort.HostMode = PortMode.PortMode_RawFile;
+                Console.WriteLine("[SYSREG] creating VM");
+                // For allowed OS type values, query IVirtualBox.GuestOSTypes and look for "id" field
+                vm = vBox.CreateMachine(machineName, "Windows2003", vmBaseFolder, null, 0);
+                vm.AddStorageController("ide0", StorageBus.StorageBus_IDE);
+                vm.MemorySize = 256; // In MB
+                vm.SaveSettings();
+
+                Console.WriteLine("[SYSREG] registering VM");
+                vBox.RegisterMachine(vm);
             }
-            else
+            catch (Exception exc)
             {
-                /* Ensure it's set to the most up to date path */
-                dbgPort.Path = dbgPortPath;
+                // Creation failed.
+                Console.WriteLine("Creating the VM failed: " + exc);
             }
+            return vm;
         }
 
         public void RunTests()
         {
-            ContinueType Ret = ContinueType.EXIT_DONT_CONTINUE;
+            ContinueType ret = ContinueType.EXIT_DONT_CONTINUE;
             IProgress vmProgress;
 
             // TODO: Load settings
@@ -256,8 +289,9 @@ namespace sysreg3
             catch (Exception exc)
             {
                 /* Opening failed. Probably we need to create it */
-                Console.WriteLine("Opening the vm failed " + exc.ToString());
-                return;
+                Console.WriteLine("Opening the vm failed: " + exc);
+
+                rosVM = CreateVm();
             }
 
             vBox.OpenSession(vmSession, rosVM.Id);
@@ -300,7 +334,7 @@ namespace sysreg3
                         Console.WriteLine("[SYSREG] Running stage {0}...", stage + 1);
                         Console.WriteLine("[SYSREG] Domain {0} started.\n", rosVM.Name);
 
-                        Ret = ProcessDebugOutput(vmSession, stage);
+                        ret = ProcessDebugOutput(vmSession, stage);
 
                         /* Kill the VM */
                         vmProgress = vmSession.Console.PowerDown();
@@ -327,7 +361,7 @@ namespace sysreg3
                         /* If we have a checkpoint to reach for success, assume that
                            the application used for running the tests (probably "rosautotest")
                            continues with the next test after a VM restart. */
-                        if (stage == 2 && Ret == ContinueType.EXIT_CONTINUE)
+                        if (stage == 2 && ret == ContinueType.EXIT_CONTINUE)
                             Console.WriteLine("[SYSREG] Rebooting VM (retry {0})", retries + 1);
                         else
                         {
@@ -338,23 +372,23 @@ namespace sysreg3
                     }
                     catch (Exception exc)
                     {
-                        Console.WriteLine("[SYSREG] Running the VM failed with exception: " + exc.ToString());
+                        Console.WriteLine("[SYSREG] Running the VM failed with exception: " + exc);
                         //break;
                     }
                 }
 
                 /* Check for a maximum number of retries */
-                if (retries == maxRetries)
+                if (retries >= maxRetries)
                 {
                     Console.WriteLine("[SYSREG] Maximum number of allowed retries exceeded, aborting!");
                     break;
                 }
 
                 /* Stop executing if asked so */
-                if (Ret == ContinueType.EXIT_DONT_CONTINUE) break;
+                if (ret == ContinueType.EXIT_DONT_CONTINUE) break;
             }
 
-            switch (Ret)
+            switch (ret)
             {
                 case ContinueType.EXIT_CHECKPOINT_REACHED:
                     Console.WriteLine("[SYSREG] Status: Reached the checkpoint!");
