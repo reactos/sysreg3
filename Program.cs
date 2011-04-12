@@ -19,54 +19,60 @@ using VirtualBox;
 
 namespace sysreg3
 {
-    class RegTester
+    public enum ContinueType
     {
-        const string machineName = "ReactOS Testbot";
-        const string diskFileName = "ReactOS Testbot.vdi";
-        const int maxRetries = 30;
-        const int numStages = 3;
-        const int vmTimeout = 60 * 1000; // 60 secs
-        const Int64 hddSize = (Int64)2048 * 1024 * 1024;
-        const string namedPipeName = @"reactos\testbot";
+        EXIT_CHECKPOINT_REACHED,
+        EXIT_CONTINUE,
+        EXIT_DONT_CONTINUE
+    }
 
-        readonly string vmBaseFolder; // Directory where VM will be created if it doesn't exist yet
-        readonly string debugLogFilename;
-
-        IMachine rosVM;
-        IVirtualBox vBox;
-
-        enum ContinueType
-        {
-            EXIT_CHECKPOINT_REACHED,
-            EXIT_CONTINUE,
-            EXIT_DONT_CONTINUE
-        }
+    public class LogReader
+    {
+        NamedPipeClientStream pipe;
+        string debugLogFilename;
+        ISession vmSession;
+        int stageNum;
+        int timeOut;
 
         String[] stageCheckpoint;
 
-        public RegTester()
+        public ContinueType result;
+        public bool timedOut;
+        public AutoResetEvent timeOutEvent;
+        Timer watchdog;
+
+        public LogReader(string namedPipeName, string logName, ISession session, int stage, int vmTimeout)
         {
-            /* Create VBox instance */
-            vBox = new VirtualBox.VirtualBox();
+            debugLogFilename = logName;
+            vmSession = session;
+            stageNum = stage;
+            timeOut = vmTimeout;
+            timedOut = true;
 
             stageCheckpoint = new String[3];
             stageCheckpoint[0] = "It's the final countdown...";
             stageCheckpoint[1] = "It's the final countdown...";
             stageCheckpoint[2] = "SYSREG_CHECKPOINT:THIRDBOOT_COMPLETE";
 
-            vmBaseFolder = Path.Combine(Environment.CurrentDirectory, "vm");
-            debugLogFilename = Path.Combine(Environment.CurrentDirectory, "testbot.txt");
-            
-            Console.WriteLine("[SYSREG] Serial log path: " + debugLogFilename);
-        }
+            result = ContinueType.EXIT_DONT_CONTINUE;
 
-        private ContinueType ProcessDebugOutput(ISession vmSession, int stage)
-        {
-            ContinueType Result = ContinueType.EXIT_DONT_CONTINUE;
+            timeOutEvent = new AutoResetEvent(false);
+            watchdog = new Timer(WatchdogCallback, timeOutEvent, timeOut, Timeout.Infinite);
 
             // Connect to the named pipe of the VM to receive its debug info.
-            NamedPipeClientStream pipe = new NamedPipeClientStream("localhost", namedPipeName, PipeDirection.In);
+            pipe = new NamedPipeClientStream("localhost", namedPipeName, PipeDirection.In);
+        }
 
+        public void WatchdogCallback(Object stateInfo)
+        {
+            AutoResetEvent autoEvent = (AutoResetEvent)stateInfo;
+
+            // Signal the event
+            autoEvent.Set();
+        }
+
+        public void Run()
+        {
             using (StreamReader sr = new StreamReader(pipe))
             using (TextWriter debugLogWriter = new StreamWriter(debugLogFilename, false))
             {
@@ -80,28 +86,11 @@ namespace sysreg3
 
                     while (!quitLoop)
                     {
-                        /* Poll the stream every 1 sec */
-                        int waitingTime = 0;
-                        while (sr.EndOfStream)
-                        {
-                            waitingTime += 1000;
-                            Thread.Sleep(1000);
-
-                            /* Peek a byte to update the EndOfStream value */
-                            sr.Peek();
-
-                            if (waitingTime >= vmTimeout)
-                            {
-                                /* We hit the timeout, quit */
-                                Console.WriteLine("[SYSREG] timeout");
-                                Result = ContinueType.EXIT_CONTINUE;
-                                quitLoop = true;
-                                break;
-                            }
-                        }
-
                         while ((line = sr.ReadLine()) != null)
                         {
+                            /* Reset the watchdog timer */
+                            watchdog.Change(timeOut, Timeout.Infinite);
+
                             Console.WriteLine(line);
                             debugLogWriter.WriteLine(line);
 
@@ -126,7 +115,7 @@ namespace sysreg3
                                 {
                                     /* It happened once again, no reason to continue */
                                     Console.WriteLine();
-                                    Result = ContinueType.EXIT_CONTINUE;
+                                    result = ContinueType.EXIT_CONTINUE;
                                     quitLoop = true;
                                     break;
                                 }
@@ -143,9 +132,9 @@ namespace sysreg3
                                 quitLoop = true;
                                 break;
                             }
-                            else if (line.Contains(stageCheckpoint[stage]))
+                            else if (line.Contains(stageCheckpoint[stageNum]))
                             {
-                                Result = ContinueType.EXIT_CHECKPOINT_REACHED;
+                                result = ContinueType.EXIT_CHECKPOINT_REACHED;
                                 quitLoop = true;
                                 break;
                             }
@@ -166,6 +155,67 @@ namespace sysreg3
                     Thread.Sleep(1000);
                 }
             }
+
+            // Signal that we're done and it's not a timed out state
+            timedOut = false;
+            timeOutEvent.Set();
+        }
+    }
+
+    class RegTester
+    {
+        const string machineName = "ReactOS Testbot";
+        const string diskFileName = "ReactOS Testbot.vdi";
+        const int maxRetries = 30;
+        const int numStages = 3;
+        const int vmTimeout = 60 * 1000; // 60 secs
+        const Int64 hddSize = (Int64)2048 * 1024 * 1024;
+        const string namedPipeName = @"reactos\testbot";
+
+        readonly string vmBaseFolder; // Directory where VM will be created if it doesn't exist yet
+        readonly string debugLogFilename;
+
+        IMachine rosVM;
+        IVirtualBox vBox;
+
+        public RegTester()
+        {
+            /* Create VBox instance */
+            vBox = new VirtualBox.VirtualBox();
+
+            vmBaseFolder = Path.Combine(Environment.CurrentDirectory, "vm");
+            debugLogFilename = Path.Combine(Environment.CurrentDirectory, "testbot.txt");
+            
+            Console.WriteLine("[SYSREG] Serial log path: " + debugLogFilename);
+        }
+
+        private ContinueType ProcessDebugOutput(ISession vmSession, int stage)
+        {
+            ContinueType Result = ContinueType.EXIT_DONT_CONTINUE;
+            bool noTimeout;
+
+            LogReader logReader = new LogReader(namedPipeName, debugLogFilename, vmSession, stage, vmTimeout);
+
+            /* Start the logger thread */
+            Thread t = new Thread(new ThreadStart(logReader.Run));
+            t.Start();
+
+            /* Wait until it terminates or exits with a timeout */
+            logReader.timeOutEvent.WaitOne();
+
+            /* Get the result */
+            Result = logReader.result;
+
+            if (logReader.timedOut)
+            {
+                /* We hit the timeout, quit */
+                Console.WriteLine("[SYSREG] timeout");
+                Result = ContinueType.EXIT_CONTINUE;
+
+                /* Force thread termination */
+                t.Abort();
+            }
+
             return Result;
         }
 
