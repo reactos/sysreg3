@@ -166,7 +166,7 @@ namespace sysreg3
     {
         const string machineName = "ReactOS Testbot";
         const string diskFileName = "ReactOS Testbot.vdi";
-        const int maxRetries = 30;
+        public int maxRetries = 30;
         const int numStages = 3;
         const int vmTimeout = 60 * 1000; // 60 secs
         const Int64 hddSize = (Int64)2048 * 1024 * 1024;
@@ -509,6 +509,16 @@ namespace sysreg3
         {
             Environment.ExitCode = 1;
             RegTester regTester = new RegTester();
+
+            // Set parameters
+            if (args.Length > 0)
+            {
+                if (args[0] == "--maxretries" && args.Length > 1)
+                {
+                    regTester.maxRetries = Int32.Parse(args[1]);
+                }
+            }
+
             regTester.RunTests();
         }
     }
