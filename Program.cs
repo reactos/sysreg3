@@ -80,8 +80,8 @@ namespace sysreg3
                 {
                     pipe.Connect(3000);
 
-                    string line;
-                    int kdbgHit = 0;
+                    string line, cacheLine = "";
+                    int kdbgHit = 0, cacheHits = 0;
                     bool quitLoop = false;
 
                     while (!quitLoop)
@@ -93,6 +93,26 @@ namespace sysreg3
 
                             Console.WriteLine(line);
                             debugLogWriter.WriteLine(line);
+
+                            /* Detect whether the same line appears over and over again.
+                               If that is the case, cancel this test after a specified number of repetitions. */
+                            if (line == cacheLine)
+                            {
+                                cacheHits++;
+
+                                if (cacheHits > RegTester.maxCacheHits)
+                                {
+                                    Console.WriteLine("[SYSREG] Test seems to be stuck in an endless loop, canceled!\n");
+                                    result = ContinueType.EXIT_CONTINUE;
+                                    quitLoop = true;
+                                    break;
+                                }
+                            }
+                            else
+                            {
+                                cacheHits = 0;
+                                cacheLine = line;
+                            }
 
                             /* Check for magic sequences */
                             if (line.Contains("kdb:>"))
@@ -167,6 +187,7 @@ namespace sysreg3
         const string machineName = "ReactOS Testbot";
         const string diskFileName = "ReactOS Testbot.vdi";
         public int maxRetries = 30;
+        public const int maxCacheHits = 50;
         const int numStages = 3;
         const int vmTimeout = 60 * 1000; // 60 secs
         const Int64 hddSize = (Int64)2048 * 1024 * 1024;
