@@ -73,10 +73,10 @@ namespace sysreg3
 
         public void Run()
         {
-            using (StreamReader sr = new StreamReader(pipe))
-            using (TextWriter debugLogWriter = new StreamWriter(debugLogFilename, false))
+            try
             {
-                try
+                using (StreamReader sr = new StreamReader(pipe))
+                using (TextWriter debugLogWriter = new StreamWriter(debugLogFilename, false))
                 {
                     pipe.Connect(3000);
 
@@ -161,19 +161,17 @@ namespace sysreg3
                         }
                     }
                 }
-                catch (Exception e)
-                {
-                    // Let the user know what went wrong.
-                    Console.WriteLine("The file could not be read:");
-                    Console.WriteLine(e.Message);
-                }
-                finally
-                {
-                    sr.Close();
-                    debugLogWriter.Close();
-                    pipe.Close();
-                    Thread.Sleep(1000);
-                }
+            }
+            catch (Exception e)
+            {
+                // Let the user know what went wrong.
+                Console.WriteLine("Exception occured in the LogReader.Run():");
+                Console.WriteLine(e.Message);
+            }
+            finally
+            {
+                pipe.Close();
+                Thread.Sleep(1000);
             }
 
             // Signal that we're done and it's not a timed out state
