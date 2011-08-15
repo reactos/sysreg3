@@ -185,7 +185,7 @@ namespace sysreg3
         const string machineName = "ReactOS Testbot";
         const string diskFileName = "ReactOS Testbot.vdi";
         public int maxRetries = 30;
-        public const int maxCacheHits = 50;
+        public const int maxCacheHits = 150;
         const int numStages = 3;
         const int vmTimeout = 60 * 1000; // 60 secs
         const Int64 hddSize = (Int64)2048 * 1024 * 1024;
