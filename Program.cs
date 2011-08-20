@@ -454,9 +454,12 @@ namespace sysreg3
 
                         ret = ProcessDebugOutput(vmSession, stage);
 
-                        /* Kill the VM */
-                        vmProgress = vmSession.Console.PowerDown();
-                        vmProgress.WaitForCompletion(-1);
+                        /* Kill the VM if it's not already powered off */
+                        if (vmSession.State != SessionState.SessionState_Unlocked)
+                        {
+                            vmProgress = vmSession.Console.PowerDown();
+                            vmProgress.WaitForCompletion(-1);
+                        }
 
                         try
                         {
