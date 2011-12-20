@@ -246,7 +246,7 @@ namespace sysreg3
             string curDir = Path.GetFullPath(Environment.CurrentDirectory);
 
             /* Create the hdd and storage */
-            rosHdd = vBox.CreateHardDisk(null, curDir + "\\" + diskFileName);
+            rosHdd = vBox.CreateHardDisk(null, Path.Combine(curDir, diskFileName));
             progress = rosHdd.CreateBaseStorage(hddSize, (uint)MediumVariant.MediumVariant_Standard);
             progress.WaitForCompletion(-1);
 
@@ -374,7 +374,7 @@ namespace sysreg3
             {
                 Console.WriteLine("[SYSREG] creating VM");
                 // For allowed OS type values, query IVirtualBox.GuestOSTypes and look for "id" field
-                vm = vBox.CreateMachine(machineName, "Windows2003", vmBaseFolder, null, 0);
+                vm = vBox.CreateMachine(Path.Combine(vmBaseFolder, machineName + ".vbox"), machineName, "Windows2003", null, 0);
                 vm.AddStorageController("ide0", StorageBus.StorageBus_IDE);
                 vm.MemorySize = 256; // In MB
                 vm.SaveSettings();
