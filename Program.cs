@@ -83,16 +83,33 @@ namespace sysreg3
                     string line, cacheLine = "";
                     int kdbgHit = 0, cacheHits = 0;
                     bool quitLoop = false;
+                    bool kdserial = false;
 
                     while (!quitLoop)
                     {
-                        while ((line = sr.ReadLine()) != null)
+                        /* Read up to 512 chars */
+                        StringBuilder buffer = new StringBuilder(512);
+                        int index = 0, read;
+                        while ((read = sr.Read()) != -1)
+                        {
+                            buffer.Append((char)read);
+                            /* Break on newlines or in case of KDBG messages (which aren't terminated by newlines) */
+                            if (read == (int)'\n')
+                                break;
+                            if (buffer.ToString().Contains("kdb:>") || buffer.ToString().Contains("--- Press q"))
+                                break;
+                            index++;
+                            if (index >= buffer.Capacity)
+                                break;
+                        }
+
+                        line = buffer.ToString();
                         {
                             /* Reset the watchdog timer */
                             watchdog.Change(timeOut, Timeout.Infinite);
 
-                            Console.WriteLine(line);
-                            debugLogWriter.WriteLine(line);
+                            Console.Write(line);
+                            debugLogWriter.Write(line);
 
                             /* Detect whether the same line appears over and over again.
                                If that is the case, cancel this test after a specified number of repetitions. */
@@ -115,19 +132,36 @@ namespace sysreg3
                             }
 
                             /* Check for magic sequences */
+                            if (line.Contains("/KDSERIAL"))
+                            {
+                                kdserial = true;
+                                continue;
+                            }
                             if (line.Contains("kdb:>"))
                             {
+#if TRACE
+                                Console.Write("-[TRACE] kdb prompt hit-");
+#endif
                                 kdbgHit++;
 
                                 if (kdbgHit == 1)
                                 {
                                     /* It happened for the first time, backtrace */
-                                    vmSession.Console.Keyboard.PutScancode(0x30); // b make
-                                    vmSession.Console.Keyboard.PutScancode(0xb0); // b release
-                                    vmSession.Console.Keyboard.PutScancode(0x14); // t make
-                                    vmSession.Console.Keyboard.PutScancode(0x94); // t release
-                                    vmSession.Console.Keyboard.PutScancode(0x1c); // Enter make
-                                    vmSession.Console.Keyboard.PutScancode(0x9c); // Enter release
+                                    if (kdserial)
+                                    {
+                                        Console.WriteLine("FIXME: send bt on pipe");
+                                    }
+                                    else
+                                    {
+                                        vmSession.Console.Keyboard.PutScancode(0x30); // b make
+                                        vmSession.Console.Keyboard.PutScancode(0xb0); // b release
+                                        vmSession.Console.Keyboard.PutScancode(0x14); // t make
+                                        vmSession.Console.Keyboard.PutScancode(0x94); // t release
+                                        vmSession.Console.Keyboard.PutScancode(0x1c); // Enter make
+                                        vmSession.Console.Keyboard.PutScancode(0x9c); // Enter release
+                                        vmSession.Console.Keyboard.PutScancodes(new int[] { 0xe0, 0x1c });
+                                        vmSession.Console.Keyboard.PutScancodes(new int[] { 0xe0, 0x8c });
+                                    }
 
                                     continue;
                                 }
@@ -455,10 +489,24 @@ namespace sysreg3
                         ret = ProcessDebugOutput(vmSession, stage);
 
                         /* Kill the VM if it's not already powered off */
-                        if (vmSession.State != SessionState.SessionState_Unlocked)
+                        if (vmSession.State != SessionState.SessionState_Unlocked
+                            && rosVM.State >= MachineState.MachineState_FirstOnline
+                            && rosVM.State <= MachineState.MachineState_LastOnline)
                         {
-                            vmProgress = vmSession.Console.PowerDown();
-                            vmProgress.WaitForCompletion(-1);
+#if TRACE
+                            Console.WriteLine("[SYSREG] Killing VM (state " + rosVM.State.ToString()+")");
+#endif
+                            try
+                            {
+                                vmProgress = vmSession.Console.PowerDown();
+                                vmProgress.WaitForCompletion(-1);
+                            }
+                            catch (System.Runtime.InteropServices.COMException comEx)
+                            {
+                                Console.WriteLine("[SYSREG] Failed to shutdown VM: " + comEx.ToString());
+                                if(rosVM.State != MachineState.MachineState_PoweredOff)
+                                    throw comEx;
+                            }
                         }
 
                         try
