@@ -60,7 +60,7 @@ namespace sysreg3
             watchdog = new Timer(WatchdogCallback, timeOutEvent, timeOut, Timeout.Infinite);
 
             // Connect to the named pipe of the VM to receive its debug info.
-            pipe = new NamedPipeClientStream("localhost", namedPipeName, PipeDirection.In);
+            pipe = new NamedPipeClientStream("localhost", namedPipeName, PipeDirection.InOut);
         }
 
         public void WatchdogCallback(Object stateInfo)
@@ -149,7 +149,9 @@ namespace sysreg3
                                     /* It happened for the first time, backtrace */
                                     if (kdserial)
                                     {
-                                        Console.WriteLine("FIXME: send bt on pipe");
+                                        char[] bt = { 'b', 't', '\r' };
+                                        foreach (char c in bt)
+                                            pipe.WriteByte((byte)c);
                                     }
                                     else
                                     {
@@ -159,8 +161,6 @@ namespace sysreg3
                                         vmSession.Console.Keyboard.PutScancode(0x94); // t release
                                         vmSession.Console.Keyboard.PutScancode(0x1c); // Enter make
                                         vmSession.Console.Keyboard.PutScancode(0x9c); // Enter release
-                                        vmSession.Console.Keyboard.PutScancodes(new int[] { 0xe0, 0x1c });
-                                        vmSession.Console.Keyboard.PutScancodes(new int[] { 0xe0, 0x8c });
                                     }
 
                                     continue;
@@ -177,8 +177,15 @@ namespace sysreg3
                             else if (line.Contains("--- Press q"))
                             {
                                 /* Send Return to get more data from Kdbg */
-                                vmSession.Console.Keyboard.PutScancode(0x1c); // Enter make
-                                vmSession.Console.Keyboard.PutScancode(0x9c); // Enter release
+                                if (kdserial)
+                                {
+                                    pipe.WriteByte((byte)'\r');
+                                }
+                                else
+                                {
+                                    vmSession.Console.Keyboard.PutScancode(0x1c); // Enter make
+                                    vmSession.Console.Keyboard.PutScancode(0x9c); // Enter release
+                                }
                                 continue;
                             }
                             else if (line.Contains("SYSREG_ROSAUTOTEST_FAILURE"))
