@@ -40,9 +40,9 @@ namespace sysreg3
 
         String[] stageCheckpoint;
 
-        public ContinueType result;
+        private ContinueType _result;
         public bool timedOut;
-        public AutoResetEvent timeOutEvent;
+        private AutoResetEvent _timeOutEvent;
         Timer watchdog;
 
         public LogReader(string namedPipeName, string logName, ISession session, int stage, int vmTimeout)
@@ -58,10 +58,10 @@ namespace sysreg3
             stageCheckpoint[1] = "It's the final countdown...";
             stageCheckpoint[2] = "SYSREG_CHECKPOINT:THIRDBOOT_COMPLETE";
 
-            result = ContinueType.EXIT_DONT_CONTINUE;
+            _result = ContinueType.EXIT_DONT_CONTINUE;
 
-            timeOutEvent = new AutoResetEvent(false);
-            watchdog = new Timer(WatchdogCallback, timeOutEvent, timeOut, Timeout.Infinite);
+            _timeOutEvent = new AutoResetEvent(false);
+            watchdog = new Timer(WatchdogCallback, _timeOutEvent, timeOut, Timeout.Infinite);
 
             // Connect to the named pipe of the VM to receive its debug info.
             pipe = new NamedPipeClientStream("localhost", namedPipeName, PipeDirection.InOut);
@@ -128,7 +128,7 @@ namespace sysreg3
                                 if (cacheHits > RegTester.maxCacheHits)
                                 {
                                     Console.WriteLine("[SYSREG] Test seems to be stuck in an endless loop, canceled!\n");
-                                    result = ContinueType.EXIT_CONTINUE;
+                                    _result = ContinueType.EXIT_CONTINUE;
                                     quitLoop = true;
                                     break;
                                 }
@@ -177,7 +177,7 @@ namespace sysreg3
                                 {
                                     /* It happened once again, no reason to continue */
                                     Console.WriteLine();
-                                    result = ContinueType.EXIT_CONTINUE;
+                                    _result = ContinueType.EXIT_CONTINUE;
                                     quitLoop = true;
                                     break;
                                 }
@@ -217,7 +217,7 @@ namespace sysreg3
                             }
                             else if (line.Contains(stageCheckpoint[stageNum]))
                             {
-                                result = ContinueType.EXIT_CHECKPOINT_REACHED;
+                                _result = ContinueType.EXIT_CHECKPOINT_REACHED;
                                 quitLoop = true;
                                 break;
                             }
@@ -239,7 +239,22 @@ namespace sysreg3
 
             // Signal that we're done and it's not a timed out state
             timedOut = false;
-            timeOutEvent.Set();
+            _timeOutEvent.Set();
+        }
+
+        public ContinueType result
+        {
+            get
+            {
+                return _result;
+            }
+        }
+        public AutoResetEvent timeOutEvent
+        {
+            get
+            {
+                return _timeOutEvent;
+            }
         }
     }
 
