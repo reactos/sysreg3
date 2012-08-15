@@ -16,6 +16,7 @@ using System.Text;
 using System.Threading;
 using System.IO;
 using VirtualBox;
+using System.Runtime.InteropServices;
 
 namespace sysreg3
 {
@@ -33,6 +34,9 @@ namespace sysreg3
         ISession vmSession;
         int stageNum;
         int timeOut;
+        const string KDBPROMPT = "kdb:>";
+        const string KDBBTCONT = "--- Press q";
+        const string KDBASSERT = "Break repea";
 
         String[] stageCheckpoint;
 
@@ -76,7 +80,8 @@ namespace sysreg3
             try
             {
                 using (StreamReader sr = new StreamReader(pipe))
-                using (TextWriter debugLogWriter = new StreamWriter(debugLogFilename, false))
+                using (TextWriter debugLogWriter = 
+                    (debugLogFilename != null) ? new StreamWriter(debugLogFilename, false) : null)
                 {
                     pipe.Connect(3000);
 
@@ -96,7 +101,9 @@ namespace sysreg3
                             /* Break on newlines or in case of KDBG messages (which aren't terminated by newlines) */
                             if (read == (int)'\n')
                                 break;
-                            if (buffer.ToString().Contains("kdb:>") || buffer.ToString().Contains("--- Press q"))
+                            if (buffer.ToString().Contains(KDBPROMPT) 
+                                || buffer.ToString().Contains(KDBBTCONT)
+                                || buffer.ToString().Contains(KDBASSERT))
                                 break;
                             index++;
                             if (index >= buffer.Capacity)
@@ -109,7 +116,8 @@ namespace sysreg3
                             watchdog.Change(timeOut, Timeout.Infinite);
 
                             Console.Write(line);
-                            debugLogWriter.Write(line);
+                            if(debugLogWriter != null)
+                                debugLogWriter.Write(line);
 
                             /* Detect whether the same line appears over and over again.
                                If that is the case, cancel this test after a specified number of repetitions. */
@@ -137,7 +145,7 @@ namespace sysreg3
                                 kdserial = true;
                                 continue;
                             }
-                            if (line.Contains("kdb:>"))
+                            if (line.Contains(KDBPROMPT))
                             {
 #if TRACE
                                 Console.Write("-[TRACE] kdb prompt hit-");
@@ -174,7 +182,7 @@ namespace sysreg3
                                     break;
                                 }
                             }
-                            else if (line.Contains("--- Press q"))
+                            else if (line.Contains(KDBBTCONT))
                             {
                                 /* Send Return to get more data from Kdbg */
                                 if (kdserial)
@@ -187,6 +195,20 @@ namespace sysreg3
                                     vmSession.Console.Keyboard.PutScancode(0x9c); // Enter release
                                 }
                                 continue;
+                            }
+                            else if (line.Contains(KDBASSERT))
+                            {
+                                /* Break once */
+                                if (kdserial)
+                                {
+                                    pipe.WriteByte((byte)'o');
+                                }
+                                else
+                                {
+                                    vmSession.Console.Keyboard.PutScancode(0x18); // 'O' make
+                                    vmSession.Console.Keyboard.PutScancode(0x98); // 'O' release
+
+                                }
                             }
                             else if (line.Contains("SYSREG_ROSAUTOTEST_FAILURE"))
                             {
@@ -228,13 +250,13 @@ namespace sysreg3
         public int maxRetries = 30;
         public const int maxCacheHits = 1000;
         const int numStages = 3;
-        const int vmTimeout = 60 * 1000; // 60 secs
+        public int vmTimeout = 60 * 1000; // 60 secs
         const Int64 hddSize = (Int64)2048 * 1024 * 1024;
         const string namedPipeName = @"reactos\testbot";
+        const string defaultLogName = "testbot.txt";
 
         readonly string vmBaseFolder; // Directory where VM will be created if it doesn't exist yet
-        readonly string debugLogFilename;
-
+        public string logName;
         IMachine rosVM;
         IVirtualBox vBox;
 
@@ -242,11 +264,18 @@ namespace sysreg3
         {
             /* Create VBox instance */
             vBox = new VirtualBox.VirtualBox();
-
             vmBaseFolder = Path.Combine(Environment.CurrentDirectory, "vm");
-            debugLogFilename = Path.Combine(Environment.CurrentDirectory, "testbot.txt");
-            
-            Console.WriteLine("[SYSREG] Serial log path: " + debugLogFilename);
+            logName = defaultLogName;
+        }
+        public string debugLogFilename
+        {
+            get
+            {
+                if (logName != null)
+                    return Path.Combine(Environment.CurrentDirectory, logName);
+                else
+                    return null;
+            }
         }
 
         private ContinueType ProcessDebugOutput(ISession vmSession, int stage)
@@ -382,7 +411,7 @@ namespace sysreg3
             CreateHardDisk(vmSession, controller, port, dev);
         }
 
-        private void EmptyDebugLog(Session vmSession)
+        private void EmptyDebugLog()
         {
             try
             {
@@ -410,14 +439,16 @@ namespace sysreg3
         private IMachine CreateVm()
         {
             IMachine vm = null;
+            IStorageController hddController;
 
             try
             {
                 Console.WriteLine("[SYSREG] creating VM");
                 // For allowed OS type values, query IVirtualBox.GuestOSTypes and look for "id" field
                 vm = vBox.CreateMachine(Path.Combine(vmBaseFolder, machineName + ".vbox"), machineName, "Windows2003", null, 0);
-                vm.AddStorageController("ide0", StorageBus.StorageBus_IDE);
+                hddController = vm.AddStorageController("sata0", StorageBus.StorageBus_SATA);
                 vm.MemorySize = 256; // In MB
+                vm.VRAMSize = 16; // In MB
                 vm.SaveSettings();
 
                 Console.WriteLine("[SYSREG] registering VM");
@@ -445,8 +476,8 @@ namespace sysreg3
             {
                 rosVM = vBox.FindMachine(machineName);
             }
-            catch (Exception exc)
-            {
+            catch (COMException exc)
+            {                
                 /* Opening failed. Probably we need to create it */
                 Console.WriteLine("Opening the vm failed: " + exc);
 
@@ -465,7 +496,7 @@ namespace sysreg3
             vmSession.UnlockMachine();
 
             /* Empty the debug log file */
-            EmptyDebugLog(vmSession);
+            EmptyDebugLog();
 
             /* Start main testing loop */
             for (int stage = 0; stage < numStages; stage++)
@@ -485,7 +516,8 @@ namespace sysreg3
                             Console.WriteLine("Error starting VM: " + vmProgress.ErrorInfo.Text);
 
                             /* Close VM session */
-                            vmSession.UnlockMachine();
+                            if(vmSession.State == SessionState.SessionState_Locked)
+                                vmSession.UnlockMachine();
                             break;
                         }
 
@@ -511,23 +543,26 @@ namespace sysreg3
                             catch (System.Runtime.InteropServices.COMException comEx)
                             {
                                 Console.WriteLine("[SYSREG] Failed to shutdown VM: " + comEx.ToString());
-                                if(rosVM.State != MachineState.MachineState_PoweredOff)
-                                    throw comEx;
+                                if (rosVM.State != MachineState.MachineState_PoweredOff)
+                                    throw;
                             }
                         }
 
                         try
                         {
                             /* Close the VM session without paying attention to any problems */
-                            vmSession.UnlockMachine();
-
-                            /* Wait till the machine state is actually closed (no vmProgress alas) */
-                            int waitingTimeout = 0;
-                            while (vmSession.State != SessionState.SessionState_Unlocked ||
-                                   waitingTimeout < 5)
+                            if (vmSession.State == SessionState.SessionState_Locked)
                             {
-                                Thread.Sleep(1000);
-                                waitingTimeout++;
+                                vmSession.UnlockMachine();
+
+                                /* Wait till the machine state is actually closed (no vmProgress alas) */
+                                int waitingTimeout = 0;
+                                while (vmSession.State != SessionState.SessionState_Unlocked ||
+                                       waitingTimeout < 5)
+                                {
+                                    Thread.Sleep(1000);
+                                    waitingTimeout++;
+                                }
                             }
                         }
                         catch
@@ -542,7 +577,7 @@ namespace sysreg3
                         else
                         {
                             /* Empty the debug log file */
-                            EmptyDebugLog(vmSession);
+                            EmptyDebugLog();
                             break;
                         }
                     }
@@ -588,13 +623,26 @@ namespace sysreg3
             RegTester regTester = new RegTester();
 
             // Set parameters
-            if (args.Length > 0)
+            for (int i = 0; i < args.Length; i++)
             {
-                if (args[0] == "--maxretries" && args.Length > 1)
+                int intValue;
+                switch (args[i])
                 {
-                    regTester.maxRetries = Int32.Parse(args[1]);
+                    case "--maxretries" :
+                        if (i < args.Length - 1 && Int32.TryParse(args[i + 1], out intValue))
+                            { regTester.maxRetries = intValue; i++; }
+                        break;
+                    case "--sessiontimeout":
+                        if (i < args.Length - 1 && Int32.TryParse(args[i + 1], out intValue))
+                            { regTester.vmTimeout = intValue * 1000; i++; }
+                        break;
+                    case "--nolog":
+                        regTester.logName = null;
+                        break;
                 }
             }
+            if(regTester.debugLogFilename != null)
+                Console.WriteLine("[SYSREG] Serial log path: " + regTester.debugLogFilename);
 
             regTester.RunTests();
         }
