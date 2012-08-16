@@ -41,7 +41,7 @@ namespace sysreg3
         String[] stageCheckpoint;
 
         private ContinueType _result;
-        public bool timedOut;
+        private bool _timedOut;
         private AutoResetEvent _timeOutEvent;
         Timer watchdog;
 
@@ -51,7 +51,7 @@ namespace sysreg3
             vmSession = session;
             stageNum = stage;
             timeOut = vmTimeout;
-            timedOut = true;
+            _timedOut = true;
 
             stageCheckpoint = new String[3];
             stageCheckpoint[0] = "It's the final countdown...";
@@ -238,22 +238,29 @@ namespace sysreg3
             }
 
             // Signal that we're done and it's not a timed out state
-            timedOut = false;
+            _timedOut = false;
             _timeOutEvent.Set();
         }
 
-        public ContinueType result
+        public ContinueType Result
         {
             get
             {
                 return _result;
             }
         }
-        public AutoResetEvent timeOutEvent
+        public AutoResetEvent TimeOutEvent
         {
             get
             {
                 return _timeOutEvent;
+            }
+        }
+        public bool TimedOut
+        {
+            get
+            {
+                return _timedOut;
             }
         }
     }
@@ -263,7 +270,7 @@ namespace sysreg3
         const string machineName = "ReactOS Testbot";
         const string diskFileName = "ReactOS Testbot.vdi";
         public int maxRetries = 30;
-        public const int maxCacheHits = 1000;
+        public static int maxCacheHits = 1000;
         const int numStages = 3;
         public int vmTimeout = 60 * 1000; // 60 secs
         const Int64 hddSize = (Int64)2048 * 1024 * 1024;
@@ -305,12 +312,12 @@ namespace sysreg3
             t.Start();
 
             /* Wait until it terminates or exits with a timeout */
-            logReader.timeOutEvent.WaitOne();
+            logReader.TimeOutEvent.WaitOne();
 
             /* Get the result */
-            Result = logReader.result;
+            Result = logReader.Result;
 
-            if (logReader.timedOut)
+            if (logReader.TimedOut)
             {
                 /* We hit the timeout, quit */
                 Console.WriteLine("[SYSREG] timeout");
@@ -653,6 +660,10 @@ namespace sysreg3
                         break;
                     case "--nolog":
                         regTester.logName = null;
+                        break;
+                    case "--maxcachehits":
+                        if (i < args.Length - 1 && Int32.TryParse(args[i + 1], out intValue))
+                        { RegTester.maxCacheHits = intValue ; i++; }
                         break;
                 }
             }
