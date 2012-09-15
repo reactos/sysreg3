@@ -467,7 +467,7 @@ namespace sysreg3
             {
                 Console.WriteLine("[SYSREG] creating VM");
                 // For allowed OS type values, query IVirtualBox.GuestOSTypes and look for "id" field
-                vm = vBox.CreateMachine(Path.Combine(vmBaseFolder, machineName + ".vbox"), machineName, "Windows2003", null, 0);
+                vm = vBox.CreateMachine(Path.Combine(vmBaseFolder, machineName + ".vbox"), machineName, null, "Windows2003", "");
                 hddController = vm.AddStorageController("sata0", StorageBus.StorageBus_SATA);
                 vm.MemorySize = 256; // In MB
                 vm.VRAMSize = 16; // In MB
@@ -518,7 +518,8 @@ namespace sysreg3
             vmSession.UnlockMachine();
 
             /* Empty the debug log file */
-            EmptyDebugLog();
+            if(logName != null)
+                EmptyDebugLog();
 
             /* Start main testing loop */
             for (int stage = 0; stage < numStages; stage++)
@@ -599,7 +600,8 @@ namespace sysreg3
                         else
                         {
                             /* Empty the debug log file */
-                            EmptyDebugLog();
+                            if(logName != null)
+                                EmptyDebugLog();
                             break;
                         }
                     }
