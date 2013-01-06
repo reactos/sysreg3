@@ -133,7 +133,7 @@ namespace sysreg3
                             }
 
                             /* Check for magic sequences */
-                            if (line.Contains("/KDSERIAL"))
+                            if (line.Contains("KDSERIAL"))
                             {
                                 kdserial = true;
                                 continue;
