@@ -135,6 +135,9 @@ namespace sysreg3
                             /* Check for magic sequences */
                             if (line.Contains("KDSERIAL"))
                             {
+#if TRACE
+                                Console.WriteLine("[SYSREG] Switching to kdserial mode");
+#endif
                                 kdserial = true;
                                 continue;
                             }
