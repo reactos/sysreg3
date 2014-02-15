@@ -80,7 +80,7 @@
   </ItemGroup>
   <ItemGroup>
     <COMReference Include="VirtualBox">
-      <Guid>{46137EEC-703B-4FE5-AFD4-7C9BBBBA0259}</Guid>
+      <Guid>{D7569351-1750-46F0-936E-BD127D5BC264}</Guid>
       <VersionMajor>1</VersionMajor>
       <VersionMinor>3</VersionMinor>
       <Lcid>0</Lcid>

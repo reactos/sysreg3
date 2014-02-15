@@ -28,7 +28,7 @@ namespace sysreg3
         public static int maxCacheHits = 1000;
         const int numStages = 3;
         public int vmTimeout = 60 * 1000; // 60 secs
-        const Int64 hddSize = (Int64)2048 * 1024 * 1024;
+        const Int64 hddSize = (Int64)2 * 1024 * 1024 * 1024;
         const string namedPipeName = @"reactos\testbot";
         const string defaultLogName = "testbot.txt";
 
@@ -94,7 +94,7 @@ namespace sysreg3
 
             /* Create the hdd and storage */
             rosHdd = vBox.CreateHardDisk(null, Path.Combine(curDir, diskFileName));
-            progress = rosHdd.CreateBaseStorage(hddSize, (uint)MediumVariant.MediumVariant_Standard);
+            progress = rosHdd.CreateBaseStorage(hddSize, new MediumVariant[] { MediumVariant.MediumVariant_Standard });
             progress.WaitForCompletion(-1);
 
             //String errStr;
@@ -224,6 +224,7 @@ namespace sysreg3
                 // For allowed OS type values, query IVirtualBox.GuestOSTypes and look for "id" field
                 vm = vBox.CreateMachine(Path.Combine(vmBaseFolder, machineName + ".vbox"), machineName, null, "Windows2003", "");
                 hddController = vm.AddStorageController("sata0", StorageBus.StorageBus_SATA);
+                hddController.PortCount = 2;
                 vm.MemorySize = 256; // In MB
                 vm.VRAMSize = 16; // In MB
                 vm.SaveSettings();
