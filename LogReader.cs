@@ -57,7 +57,7 @@ namespace sysreg3
             watchdog = new Timer(WatchdogCallback, _timeOutEvent, timeOut, Timeout.Infinite);
 
             // Connect to the named pipe of the VM to receive its debug info.
-            pipe = new NamedPipeClientStream("localhost", namedPipeName, PipeDirection.InOut);
+            pipe = new NamedPipeClientStream(".", namedPipeName, PipeDirection.InOut);
         }
 
         public void WatchdogCallback(Object stateInfo)
